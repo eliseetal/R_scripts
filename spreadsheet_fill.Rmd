@@ -1,0 +1,200 @@
+---
+title: 'Fill spreadsheets'
+author: "Elise Kanber"
+date: "18/10/2022"
+output: html_document
+
+
+### Folder structure ### 
+#      2_Stimuli_Clips > LUCID > PP_FEMALES/PP_MALES > ppid > RMS > Examples
+# Parameters need to be set in the third code chunk
+
+# Requires templates to be available for filling in (code for creating these at the bottom of this script)
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load in packages: 
+```{r}
+library(tidyverse)
+library(dplyr)
+# install.packages("tuneR")
+# library(tuneR)
+library(stringr)
+options(scipen=999) # so that we won't get scientific notation 
+
+```
+
+# Fill out some parameters: 
+```{r}
+id <- "pp01"
+cb <-  "3"                      # Which counterbalancing order do we want? 
+sex <- "f"                      # What is the sex of the participant's friend/partner/sibling? 
+pname <- "Brenda"               # Name of the friend/partner/sibling. 
+
+if(sex == "f"){                 # which folder to look for the participant stimuli
+ ppfolder = "PP_FEMALES"        
+} else {
+  ppfolder = "PP_MALES"
+}
+```
+
+# Read in the relevant template spreadsheet based on the above parameters: 
+```{r}
+setwd("/Users/carolynmcgettigan/OneDrive - University College London/postdoc/VOCAL_ID_REPRESENTATIONS/familiarity/Gorilla/") # Where are the templates stored?
+
+sheet <- read.csv(paste0("template_", sex, "_", cb, ".csv"))
+
+
+sheet <- sheet %>%                                            # substitute "FRIEND" for the relevant name 
+  mutate(text = gsub("FRIEND", pname, text)) %>% 
+  mutate(CORRECT = gsub("FRIEND", pname, CORRECT)) %>% 
+  mutate(ANSWER = gsub("FRIEND", pname, ANSWER)) %>% 
+  mutate(A = gsub("FRIEND", pname, A))
+
+```
+
+# Read in the sequence files
+```{r}
+stimdir <- paste0("/Users/carolynmcgettigan/OneDrive - University College London/postdoc/VOCAL_ID_REPRESENTATIONS/LUCID/2_StimuliClips/", ppfolder, "/", id, "/RMS/Examples/") 
+
+# List all of the .wav files in the shortlist directory (recursive search)
+stims <- data.frame(Filename = list.files(path=stimdir, pattern = "\\.mp3$", recursive = TRUE)) 
+
+stims <- stims %>% filter(str_detect(Filename, "List")) %>%           # Keep the files that contain the string "List"
+        mutate(Filename = gsub("Examples/", "", Filename))   # Remove the folder name (Examples/) from the filename 
+stims <- droplevels(stims)
+
+# stims[nrow(stims) + 1,1] <- stims[1,1]  # Don't need this anymore. 
+
+```
+
+# Paste them to the correct position in the sheet
+```{r}
+sheet <- sheet %>% 
+    mutate(audio = sub("SEQUENCE2", stims$Filename[2], audio)) %>% # Replace "SEQUENCE2" with the correct filename.
+    mutate(audio = sub("SEQUENCE", stims$Filename[1], audio)) 
+```
+
+# Read in the 80 stimuli: 
+```{r}
+stimdir <- paste0("/Users/carolynmcgettigan/OneDrive - University College London/postdoc/VOCAL_ID_REPRESENTATIONS/LUCID/2_StimuliClips/", ppfolder, "/", id, "/RMS/") # path to stimuli
+
+stimuli <- data.frame(Filename = list.files(path=stimdir, pattern = "\\.mp3$", recursive = FALSE)) # read in the list of stimuli 
+```
+
+# Fill rows with new stimuli 
+```{r}
+data <- sheet 
+
+data$audio[data$ANSWER == pname] <- as.character(stimuli$Filename)
+
+data <- replace(data, is.na(data), '')
+
+```
+
+# Save file as csv 
+```{r}
+write.csv(data,paste0(id, "_spreadsheet_", sex, "_", cb, ".csv"), row.names = FALSE)
+```
+
+
+# Refresher training 
+```{r}
+# Read in the refresher template (includes the text info)
+refresh <- read.csv("/Users/carolynmcgettigan/OneDrive - University College London/postdoc/VOCAL_ID_REPRESENTATIONS/familiarity/Gorilla/template_refresher.csv")
+refresh <- replace(refresh, is.na(refresh), '')
+head <- data %>% select("randomise_blocks", "randomise_trials", "display", "audio", "ANSWER")
+head <- head[1:13,]
+
+
+joined <- cbind(head, refresh)
+# # refresh <- replace(refresh, is.na(refresh), '')
+# 
+# # Fill with the correct sequence files and participant partner name 
+# refresh <- refresh %>% 
+#   mutate(audio = sub("SEQUENCE2", stims$Filename[2], audio)) %>% 
+#   mutate(audio = sub("SEQUENCE", stims$Filename[1], audio)) %>% 
+#   mutate(text = gsub("FRIEND", pname, text)) 
+#  
+# refresh <- refresh[!apply(is.na(refresh) | refresh == "", 1, all),]
+
+# Subset the data from the familiarity training to include only the first block
+
+data_subset <- data %>% 
+  filter(display == "block1" | display == "block1_end" | display == "end")
+
+# bind the two together 
+
+refresh_spreadsheet <- rbind(joined, data_subset)
+refresh_spreadsheet <- replace(refresh_spreadsheet, is.na(refresh_spreadsheet), '')
+
+# write to csv 
+
+write.csv(refresh_spreadsheet, paste0(id, "_refresher_", sex, "_", cb, ".csv"), row.names = FALSE)
+
+```
+
+# MRI instructions and introduction to "Charlie" voice: 
+```{r}
+MRI_sheet <- read.csv("")
+if(sex == "f"){
+if(cb == "1" | cb == "4"){
+  "F22" # Read in one stimulus for F22
+} else if (cb == "2" | cb == "6"){
+  "F15"
+} else if (cb == "3" |cb == "5") {
+  "F11"
+}
+} else {
+  if(cb == "1" | cb == "4") {
+  "M26"
+  } else if (cb == "2" | cb == "6") {
+  "M17" 
+  } else if (cb == "3" | cb = "5") {
+  "M10"
+  }
+}
+```
+
+# Code for creating templates
+```{r}
+# temp <- read.csv("/Users/carolynmcgettigan/OneDrive - University College London/postdoc/VOCAL_ID_REPRESENTATIONS/familiarity/Gorilla/template.csv", stringsAsFactors = FALSE)
+# 
+# stimdir <- paste0("/Users/carolynmcgettigan/OneDrive - University College London/postdoc/VOCAL_ID_REPRESENTATIONS/familiarity/Gorilla/M26/RMS/")  # change M26 to the correct folder
+# 
+# stimuli <- data.frame(Filename = list.files(path=stimdir, pattern = "\\.mp3$", recursive = FALSE))
+# sequences <- data.frame(Filename = list.files(path=stimdir, pattern = "\\.mp3$", recursive = TRUE))
+# sequences <- sequences %>% filter(str_detect(Filename, "List")) %>% 
+#              mutate(Filename = gsub("Examples/", "", Filename))
+# sequences <- droplevels(sequences)
+# 
+# 
+# data <- temp
+# 
+# data <- data %>% 
+#     mutate(audio = sub("alexseq2", sequences$Filename[2], audio)) %>% 
+#     mutate(audio = sub("alexseq", sequences$Filename[1], audio)) 
+# 
+# data$audio[data$ANSWER == "Alex"] <- as.character(stimuli$Filename)
+# 
+# data <- replace(data, is.na(data), '')
+# 
+# stimdir <- paste0("/Users/carolynmcgettigan/OneDrive - University College London/postdoc/VOCAL_ID_REPRESENTATIONS/familiarity/Gorilla/M10/RMS/")  # Change to correct filepath 
+# 
+# stimuli <- data.frame(Filename = list.files(path=stimdir, pattern = "\\.mp3$", recursive = FALSE))
+# 
+# data$audio[data$ANSWER == "Someone else"] <- as.character(stimuli$Filename)
+# 
+# write.csv(data,paste0("template_m_6.csv"), row.names = FALSE)
+
+```
+
+
+
+
+
+
