@@ -1,12 +1,12 @@
 ---
 title: 'Fill spreadsheets'
 author: "Elise Kanber"
-date: "18/10/2022"
+date: "26/10/2022"
 output: html_document
 
 
 ### Folder structure ### 
-#      2_Stimuli_Clips > LUCID > PP_FEMALES/PP_MALES > ppid > RMS > Examples
+#      2_Stimuli_Clips > LUCID > PPT_FEMALES/PPT_MALES > ppid > RMS > Examples
 # Parameters need to be set in the third code chunk
 
 # Requires templates to be available for filling in (code for creating these at the bottom of this script)
@@ -21,67 +21,83 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(dplyr)
+library(stringr)
 # install.packages("tuneR")
 # library(tuneR)
-library(stringr)
 options(scipen=999) # so that we won't get scientific notation 
+
 
 ```
 
 # Fill out some parameters: 
 ```{r}
-id <- "pp01"
+id <- "pp01"                    # What is the participant ID? 
 cb <-  "3"                      # Which counterbalancing order do we want? 
 sex <- "f"                      # What is the sex of the participant's friend/partner/sibling? 
-pname <- "Brenda"               # Name of the friend/partner/sibling. 
+pname <- "Frankie"              # Name of the friend/partner/sibling. 
 
-if(sex == "f"){                 # which folder to look for the participant stimuli
- ppfolder = "PP_FEMALES"        
+basedir <- paste0("/Users/e.kanber/Filestore/Research3/SHaPS/VoCoLab(Carolyn_McGettigan)/FAMILIARITY RSA/Stimuli/")
+                                # Set the base directory to be accurate for your machine. 
+
+```
+# Set up other params and directories (shouldn't need to change these)
+```{r}
+
+# This tells R whether to look for the stimuli in the male or female voice clips folders. 
+if(sex == "f"){                 
+ ppfolder      = "PPT_FEMALES"
+ lucidfolder   = "LUCID_FEMALES"
 } else {
-  ppfolder = "PP_MALES"
+  ppfolder     = "PPT_MALES"
+  lucidfolder  = "LUCID_MALES"
 }
+
+templatedir      <- paste0(basedir, "UsefulScripts/gorilla_templates/")
+seqdir           <- paste0(basedir, "LUCID/2_StimuliClips/", ppfolder, "/", id, "/RMS/Examples/")
+stimdir          <- paste0(basedir, "LUCID/2_StimuliClips/", ppfolder, "/", id, "/RMS/")
+outdir           <- paste0(basedir,"LUCID/3_GorillaSpreadsheets/")
+scandir          <- paste0(stimdir, "Scanner/")
+
 ```
 
-# Read in the relevant template spreadsheet based on the above parameters: 
+# Read in the appropriate Gorilla template csv
 ```{r}
-setwd("/Users/carolynmcgettigan/OneDrive - University College London/postdoc/VOCAL_ID_REPRESENTATIONS/familiarity/Gorilla/") # Where are the templates stored?
-
+setwd(templatedir)
 sheet <- read.csv(paste0("template_", sex, "_", cb, ".csv"))
 
-
-sheet <- sheet %>%                                            # substitute "FRIEND" for the relevant name 
-  mutate(text = gsub("FRIEND", pname, text)) %>% 
-  mutate(CORRECT = gsub("FRIEND", pname, CORRECT)) %>% 
-  mutate(ANSWER = gsub("FRIEND", pname, ANSWER)) %>% 
-  mutate(A = gsub("FRIEND", pname, A))
+# substitute FRIEND for the relevant name (participant's partner/friend/sibling's name)
+sheet <- sheet %>%                                            
+         mutate(text = gsub("FRIEND", pname, text)) %>% 
+         mutate(CORRECT = gsub("FRIEND", pname, CORRECT)) %>% 
+         mutate(ANSWER = gsub("FRIEND", pname, ANSWER)) %>% 
+         mutate(A = gsub("FRIEND", pname, A))
 
 ```
 
-# Read in the sequence files
+# Read in the sequence files (two 6-clip sequences)
 ```{r}
-stimdir <- paste0("/Users/carolynmcgettigan/OneDrive - University College London/postdoc/VOCAL_ID_REPRESENTATIONS/LUCID/2_StimuliClips/", ppfolder, "/", id, "/RMS/Examples/") 
 
 # List all of the .wav files in the shortlist directory (recursive search)
-stims <- data.frame(Filename = list.files(path=stimdir, pattern = "\\.mp3$", recursive = TRUE)) 
+stims <- data.frame(Filename = list.files(path=seqdir, pattern = "\\.mp3$", recursive = TRUE)) 
 
 stims <- stims %>% filter(str_detect(Filename, "List")) %>%           # Keep the files that contain the string "List"
-        mutate(Filename = gsub("Examples/", "", Filename))   # Remove the folder name (Examples/) from the filename 
+         mutate(Filename = gsub("Examples/", "", Filename))   # Remove the folder name (Examples/) from the filename 
 stims <- droplevels(stims)
 
 # stims[nrow(stims) + 1,1] <- stims[1,1]  # Don't need this anymore. 
 
 ```
 
-# Paste them to the correct position in the sheet
+# Paste the sequences to the correct positions in the dataframe
 ```{r}
 sheet <- sheet %>% 
     mutate(audio = sub("SEQUENCE2", stims$Filename[2], audio)) %>% # Replace "SEQUENCE2" with the correct filename.
     mutate(audio = sub("SEQUENCE", stims$Filename[1], audio)) 
 ```
 
-# Read in the 80 stimuli: 
+# Read in the 80 stimuli from the participant's FRIEND: 
 ```{r}
-stimdir <- paste0("/Users/carolynmcgettigan/OneDrive - University College London/postdoc/VOCAL_ID_REPRESENTATIONS/LUCID/2_StimuliClips/", ppfolder, "/", id, "/RMS/") # path to stimuli
+setwd(stimdir)
 
 stimuli <- data.frame(Filename = list.files(path=stimdir, pattern = "\\.mp3$", recursive = FALSE)) # read in the list of stimuli 
 ```
@@ -90,6 +106,7 @@ stimuli <- data.frame(Filename = list.files(path=stimdir, pattern = "\\.mp3$", r
 ```{r}
 data <- sheet 
 
+# Fill the rows with the stimuli where the name in the ANSWER column is the participant's friend's name (pname)
 data$audio[data$ANSWER == pname] <- as.character(stimuli$Filename)
 
 data <- replace(data, is.na(data), '')
@@ -98,29 +115,23 @@ data <- replace(data, is.na(data), '')
 
 # Save file as csv 
 ```{r}
+setwd(outdir)
 write.csv(data,paste0(id, "_spreadsheet_", sex, "_", cb, ".csv"), row.names = FALSE)
 ```
 
 
 # Refresher training 
 ```{r}
+setwd(templatedir)
+
 # Read in the refresher template (includes the text info)
-refresh <- read.csv("/Users/carolynmcgettigan/OneDrive - University College London/postdoc/VOCAL_ID_REPRESENTATIONS/familiarity/Gorilla/template_refresher.csv")
+refresh <- read.csv("template_refresher.csv")
 refresh <- replace(refresh, is.na(refresh), '')
 head <- data %>% select("randomise_blocks", "randomise_trials", "display", "audio", "ANSWER")
 head <- head[1:13,]
 
 
 joined <- cbind(head, refresh)
-# # refresh <- replace(refresh, is.na(refresh), '')
-# 
-# # Fill with the correct sequence files and participant partner name 
-# refresh <- refresh %>% 
-#   mutate(audio = sub("SEQUENCE2", stims$Filename[2], audio)) %>% 
-#   mutate(audio = sub("SEQUENCE", stims$Filename[1], audio)) %>% 
-#   mutate(text = gsub("FRIEND", pname, text)) 
-#  
-# refresh <- refresh[!apply(is.na(refresh) | refresh == "", 1, all),]
 
 # Subset the data from the familiarity training to include only the first block
 
@@ -133,32 +144,86 @@ refresh_spreadsheet <- rbind(joined, data_subset)
 refresh_spreadsheet <- replace(refresh_spreadsheet, is.na(refresh_spreadsheet), '')
 
 # write to csv 
-
+setwd(outdir)
 write.csv(refresh_spreadsheet, paste0(id, "_refresher_", sex, "_", cb, ".csv"), row.names = FALSE)
 
 ```
 
-# MRI instructions and introduction to "Charlie" voice: 
+# Alex and Charlie voices
 ```{r}
-MRI_sheet <- read.csv("")
+# MRI_sheet <- read.csv("")
 if(sex == "f"){
-if(cb == "1" | cb == "4"){
-  "F22" # Read in one stimulus for F22
-} else if (cb == "2" | cb == "6"){
-  "F15"
-} else if (cb == "3" |cb == "5") {
-  "F11"
-}
-} else {
-  if(cb == "1" | cb == "4") {
-  "M26"
-  } else if (cb == "2" | cb == "6") {
-  "M17" 
-  } else if (cb == "3" | cb = "5") {
-  "M10"
+  if(cb == "1" | cb == "4"){
+    Charlie <- "F22" 
+  } else if (cb == "2" | cb == "6"){
+    Charlie <- "F15"
+  } else if (cb == "3" |cb == "5") {
+    Charlie <- "F11"
   }
 }
+
+if (sex == "m") {
+    if(cb == "1" | cb == "4") {
+      Charlie <- "M26"
+      } else if (cb == "2" | cb == "6") {
+      Charlie <- "M17" 
+      }  else if (cb == "3" | cb == "5") {
+        Charlie <- "M10"
+      }
+}
+
+
+
+if(sex == "f") {
+  if(cb == "1" | cb == "2") {
+    Alex <- "F11" 
+  } else if (cb == "3" | cb == "4") {
+    Alex <- "F15" 
+  } else if (cb == "5" | cb == "6") {
+    Alex <- "F22" 
+  }
+}
+
+if(sex == "m"){
+    if (cb == "1" | cb == "2") {
+      Alex <- "M10"
+    } else if (cb == "3" | cb == "4") {
+      Alex <- "M17"
+    } else if (cb == "5" | cb == "6") {
+      Alex <- "M26"
+    }
+}
 ```
+
+
+# Read in the scanner stimuli
+```{r}
+# setwd(scandir)
+fdir        <- paste0(basedir, "LUCID/2_StimuliClips/", lucidfolder, "/", Alex, "/RMS/Scanner")
+ufdir       <- paste0(basedir, "LUCID/2_StimuliClips/", lucidfolder, "/", Charlie, "/RMS/Scanner")
+
+pf_stims    <- data.frame(Filename = list.files(path=scandir, pattern = "\\.wav$", recursive = FALSE))
+f_stims     <- data.frame(Filename = list.files(path=fdir, pattern = "\\.wav$", recursive = FALSE))
+uf_stims    <- data.frame(Filename = list.files(path=ufdir, pattern = "\\.wav$", recursive = FALSE))
+
+# Bind the rows to create a list of file names (to be read in by MATLAB)
+joined      <- rbind(pf_stims, f_stims, uf_stims) 
+
+# FileDir = paste0("/Users/carolynmcgettigan/Documents/familiarity/")
+# 
+# if (!dir.exists(paste0(FileDir, id))) {
+#       dir.create(paste0(FileDir, id))}
+      
+setwd(scandir)
+# Write the csv file to the scan directory (where the scanner stimuli are saved)
+# Move everything in this directory to your personal laptop for testing at the scanner. 
+write.csv(joined, paste0(id, "_stims.csv"), row.names = FALSE, col.names = FALSE)
+
+```
+
+
+
+
 
 # Code for creating templates
 ```{r}
