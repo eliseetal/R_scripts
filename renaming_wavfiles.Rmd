@@ -1,0 +1,100 @@
+---
+title: "Re-naming files"
+author: "Elise Kanber"
+date: "21/04/2022"
+output: html_document
+---
+##########################################################################################################
+A script to rename files. Here we used files from the freely-available Saarbruecken voice database. Files were renamed such that the new file names are more intuitive/contain useful information such as the age, sex, and vocal health of the speaker. 
+##########################################################################################################
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load packages:
+```{r}
+library(dplyr)
+library(tidyverse)
+library(readr)
+# install.packages("sjmisc")
+library(sjmisc)
+```
+
+## First, I want to extract the session ID from the audio file names and then save this to a new column called session.id (to match a column in another existing file, so that eventually we can inner_join())
+Read in the csv file containing the audio file names:
+```{r}
+audiofiles <- read.csv("/Users/e.kanber/OneDrive - University College London/postdoc/saarbruecken voice database/audio_files.csv")
+```
+
+## The first characters in the audio file name are the session id. I want to save off the numbers, so I use "parse_number". Can also use substr()
+```{r}
+# audiofiles <- audiofiles %>% mutate(session.id = substr(audio, 1, 3))
+
+audiofiles <- audiofiles %>% mutate(session.id = parse_number(audio))
+```
+
+## Next, I want to read in the .csv file containing the speaker demographic information:
+```{r}
+demographics <- read.csv("/Users/e.kanber/OneDrive - University College London/postdoc/saarbruecken voice database/database.csv")
+```
+
+## Join together the two dataframes: 
+```{r}
+data <- inner_join(audiofiles, demographics)
+
+# Make the recording type (healthy or pathological) more meaningful
+data <- data %>% mutate(recording.type = if_else(recording.type == "n", "hlth", "path"))
+
+# Create a new column that includes whether the recording is an electroglottograph recording (egg) or not. Rows will either contain "-egg" or be left blank. 
+data <- data %>% mutate(egg = if_else(grepl("egg", audio, fixed=TRUE), "-egg", ""))
+
+data <- data %>% mutate(old = audio)
+
+data$audio <- gsub("-egg.wav", "", data$audio)
+data$audio <- gsub(".wav", "", data$audio)
+
+# Make the Sex of the speaker more meaningful (m/f)
+data <- data %>% mutate(sex = if_else(sex == "w", "f", "m"))
+```
+
+## New file names: 
+```{r}
+data <- data %>% mutate(new_name = paste0(audio, "_", age, sex, "-", recording.type, egg, ".wav"))
+```
+
+
+## Select particular columns: 
+```{r}
+
+data$audiofile <- data$new_name
+data <- data %>% mutate(recording.type = if_else(recording.type == "hlth", "healthy", "pathological"))
+data$original.filename <- data$old
+database <- data %>% select(audiofile, original.filename, recording.type, sex, age, pathology, notes.on.pathology, participant.id, date.of.recording)
+```
+ 
+## Save database to csv file with new filenames
+```{r}
+write.csv(database, "Saarbrücken Voice Database.csv")
+```
+
+## Filter for file naming - e.g keep only the female healthy audio files. 
+```{r}
+filtered <- data %>% filter(recording.type == "pathological" & sex == "m")
+```
+
+
+## Rename files in directory:
+```{r}
+# filenames_old <- list.files("/Users/e.kanber/OneDrive - University College London/postdoc/saarbruecken voice database/female_healthy/")
+
+my_path <- "/Users/e.kanber/OneDrive - University College London/postdoc/saarbruecken voice database/male_pathological/"
+
+# filenames_new <- paste0(data$audio, "_", data$age, data$sex, "-", data$recording.type, data$egg, ".wav")
+for(x in 1:nrow(filtered)){
+file.rename(paste0(my_path, filtered$old[x]),       # Rename files
+            paste0(my_path, filtered$new_name[x]))
+
+ }
+# lapply()
+```
