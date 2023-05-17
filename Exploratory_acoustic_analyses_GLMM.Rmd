@@ -15,7 +15,6 @@ In this experiment, participants attempted to recognise three newly-learned voic
 
 Load packages: 
 ```{r}
-# Wouldn't let me load tidyverse "no package called ggplot2" - had to type install.packages("ggplot2", type="binary")
 library(tidyverse)
 library(lme4) 
 library(effects)
