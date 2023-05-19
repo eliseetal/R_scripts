@@ -1,0 +1,497 @@
+---
+title: "analysis script famous voices"
+author: "Elise Kanber"
+date: "16/02/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Description: 
+
+This is an example data analysis pipeline for an experiment ran as part of my PhD.
+Steps involved: 
+- Merging multiple CSVs containing participant data using a for loop
+- Cleaning the data using dplyr functions 
+          - remove participants who were performing below a particular threshold
+          - remove "time out" trials (this was a reaction time task and if participants were too slow they were timed out)
+          - remove reaction times that were too fast (unlikely to be true reaction times)
+          - only keep columns of interest
+- set up linear mixed effects models comparing a model that contains all fixed and random effects to a model with the              fixed effect of interest removed
+- run pairwise multiple comparisons using emmeans()
+- Plot the model estimates and effects 
+- Print estimates and confidence intervals (sjPlot)
+
+Load packages: 
+```{r}
+library(tidyverse)
+library(lme4)
+library(emmeans)
+library(effects)
+library(ggplot2)
+library(afex)
+library(yarrr)
+library(sjPlot)
+```
+
+Our data are contained in multiple csv files that have the same column names. First we need to combine these files: 
+First, make sure the csvs you want to combine are all in the same folder, and that nothing else is in this folder.
+```{r}
+# Create list of files in folder that you want to merge
+
+my_files<- list.files(path/to/merge/folder)
+
+my_data<-data.frame() # Create empty data frame for combined data
+nsub <- 30 # Change to your sample size (should match number of files you want to merge)
+
+# Clean and combine csv files
+
+for (i in 1:nsub)
+  
+{myfile<-my_files[i]
+this.file<-read.csv(paste0("path/to/merge/folder",myfile))
+
+# Here you can list the columns you want to keep from the CSVs 
+this.file<-select(this.file, Participant.Public.ID, Participant.Status, branch.k895, Spreadsheet, Trial.Number, Screen.Name, Zone.Type, Reaction.Time, 
+                  Response, Correct, Timed.Out, display, spaceFix, cue, reward.magnitude, stim_type, threshold)
+# this.file<- filter(this.file, Zone.Type == "response_button_text" | Zone.Type == "response_keyboard")
+my_data<-rbind(my_data, this.file)
+}
+
+write.csv(my_data,"raw_merged.csv")
+
+```
+
+
+
+Now we can read in the data (or use "my_data" variable above)
+```{r}
+data <- read.csv("raw_merged.csv")
+questionnaires <- read.csv("questionnaire_merged.csv")
+```
+
+Clean data using filter and select:
+```{r}
+
+cleaned <- filter(data, display == "main" & Screen.Name == "Screen 2")
+
+cleaned$Participant.Public.ID <- droplevels(cleaned$Participant.Public.ID)
+
+# Remove participants that timed out over a 1/3 of the time
+
+timeout_summary <- cleaned %>% group_by(Participant.Public.ID) %>% 
+  summarise(ntimeouts = sum(Timed.Out, na.rm = TRUE), pcnt = (ntimeouts/72)*100) %>% 
+  mutate(exclude = if_else(ntimeouts > 24, 1, 0))
+
+mean_timeout <- timeout_summary %>% summarise(meantimeout = mean(ntimeouts))
+
+# Create a separate dataframe including the participant id and whether this participant should be excluded. 
+to_exclude <- select(timeout_summary, Participant.Public.ID, exclude)
+
+
+# join to_exclude to cleaned
+merged <- inner_join(cleaned, to_exclude)
+
+```
+
+Select only the columns we want, and also filter to only get the fast enough RT trials (i.e. filter out the timeouts): 
+```{r}
+dat <- merged %>% select(Participant.Public.ID, reward.magnitude, Reaction.Time, display, Response, Screen.Name, exclude, stim_type, branch.k895, threshold, Spreadsheet)
+
+
+# Extract the counterbalancing order: 
+
+dat$CB_order <- dat$Spreadsheet %>% 
+  recode(beyonce_CB1 = "CB1", beyonce_CB2 = "CB2", beyonce_CB3 = "CB3", harry_CB1 = "CB1", harry_CB2 = "CB2", harry_CB3 = "CB3", taylor_CB1 = "CB1", taylor_CB2 = "CB2", taylor_CB3 = "CB3", justin_CB1 = "CB1", justin_CB2 = "CB2", justin_CB3 = "CB3")
+
+# dat <- dat %>% group_by(Participant.Public.ID) %>% mutate(n = 1:n()) %>% mutate(half = if_else(n == 1:36, 1, 2))
+
+
+# # Cleaned data but including timeouts, to be used to analyse timeouts:
+# dat2 <- dat %>% filter(exclude == 0)
+# dat2 <- dat2 %>%  filter(Participant.Public.ID != "p115", Participant.Public.ID != "p120", Participant.Public.ID != "p129", Participant.Public.ID != "p105", Participant.Public.ID != "p202", Participant.Public.ID != "p242", Participant.Public.ID != "p126", Participant.Public.ID != "p262")
+
+
+# "p146" "p214"
+
+# dat2$Participant.Public.ID <- droplevels(dat2$Participant.Public.ID)
+
+
+# Include only trials that were not timeouts: 
+dat <- dat %>% filter(Response == "Press" & exclude == 0)
+
+
+any_NAs <- dat %>% 
+  group_by(Participant.Public.ID) %>% 
+  summarise(mean = mean(threshold))
+
+dat <- dat %>% filter(Participant.Public.ID != "p115", Participant.Public.ID != "p120", Participant.Public.ID != "p129", Participant.Public.ID != "p105", Participant.Public.ID != "p202", Participant.Public.ID != "p242", Participant.Public.ID != "p126", Participant.Public.ID != "p262")
+
+
+```
+
+
+Include only RTs that were 150ms or longer:
+```{r}
+# Convert RT into numeric: 
+dat$Reaction.Time <- as.character(dat$Reaction.Time)
+options(digits = 9)
+dat$Reaction.Time <- as.numeric(dat$Reaction.Time)
+
+finaldat <- dat %>% filter(Reaction.Time > 149.99)
+
+finaldat$Participant.Public.ID <- droplevels(finaldat$Participant.Public.ID)
+finaldat$reward.magnitude <- droplevels(finaldat$reward.magnitude)
+
+
+
+```
+
+Set up the models:
+```{r}
+full <- lmer(Reaction.Time ~ reward.magnitude + (1|Participant.Public.ID), data = finaldat, REML = FALSE)
+reduced <- lmer(Reaction.Time ~   (1|Participant.Public.ID), data = finaldat, REML = FALSE)
+
+anova(full,reduced)
+
+summary(full)
+
+```
+```{r}
+emmeans(full, (pairwise ~ reward.magnitude), adjust = "none", pbkrtest.limit = 4881)
+```
+
+```{r}
+e <- allEffects(full)
+print(e)
+plot(e)
+```
+Raw means: 
+```{r}
+raw_means <- finaldat %>% group_by(reward.magnitude) %>% summarise(mean = mean(Reaction.Time), SD = sd(Reaction.Time))
+View(raw_means)
+```
+
+Estimates and confidence intervals: 
+```{r}
+library(sjPlot)
+plot_model(full)
+tab_model(full, file = "SID_famous.html")
+```
+
+
+Analysis to examine whether there is a relationship between how pleasant the listener rated the voice recordings and how fast they responded in a reaction time task to these voices: 
+
+# Filter the questionnaire data, and then join it to the main data: 
+```{r}
+questionnaires$Question.Key <- questionnaires$Question.Key %>% recode(beyonce_pleasantness_rating = "large_pleasantness_rating", harry_pleasantness_rating = "large_pleasantness_rating", Taylor_pleasantness_rating = "large_pleasantness_rating", Justin_pleasantness_rating = "large_pleasantness_rating", Simone_pleasantness_rating = "small_pleasantness_rating", Max_pleasantness_rating = "small_pleasantness_rating", Julie_pleasantness_rating = "small_pleasantness_rating", Sean_pleasantness_rating = "small_pleasantness_rating")
+ 
+pleasantness <- filter(questionnaires, Question.Key == "large_pleasantness_rating" | 
+                         Question.Key == "small_pleasantness_rating" |
+                         Question.Key == "tone_pleasantness_rating")
+
+
+# Recode the column names so that I can merge the questionnaire data with the main data: 
+# Index into the levels and rename each one
+levels(pleasantness$Question.Key)[levels(pleasantness$Question.Key) == "large_pleasantness_rating"]  <- "large"
+levels(pleasantness$Question.Key)[levels(pleasantness$Question.Key) == "small_pleasantness_rating"] <- "small"
+levels(pleasantness$Question.Key)[levels(pleasantness$Question.Key) == "tone_pleasantness_rating"] <- "none"
+pleasantness$rating <- pleasantness$Response
+pleasantness$reward.magnitude <- pleasantness$Question.Key
+
+pleasantness <- select(pleasantness, Participant.Public.ID, rating, reward.magnitude)
+
+RTs_with_ratings <- inner_join(finaldat, pleasantness)
+RTs_with_ratings <- mutate(RTs_with_ratings, grouped_rating = if_else(rating == "1" | rating == "2" | rating == "3", "low", if_else(rating == "4" | rating == "5" | rating == "6", "medium", "high")))
+
+RTs_with_ratings$Participant.Public.ID <- as.factor(RTs_with_ratings$Participant.Public.ID)
+
+```
+
+Set up models: 
+```{r}
+pleasant_full <- lmer(Reaction.Time ~ reward.magnitude*grouped_rating + (1|Participant.Public.ID), data = RTs_with_ratings, REML = FALSE)
+
+
+pleasant_reduced <- lmer(Reaction.Time ~ reward.magnitude + grouped_rating + (1|Participant.Public.ID), data = RTs_with_ratings, REML = FALSE)
+
+
+anova(pleasant_full,pleasant_reduced)
+
+# emmeans(pleasant_full, (pairwise ~ reward.magnitude*grouped_rating), adjust = "none")
+summary(pleasant_full)
+
+```
+No interaction:
+```{r}
+grouped_rating_eff <- lmer(Reaction.Time ~ reward.magnitude + (1|Participant.Public.ID), data = RTs_with_ratings, REML = FALSE)
+
+anova(pleasant_reduced, grouped_rating_eff)
+
+emmeans(pleasant_reduced, (pairwise ~ grouped_rating), adjust = "none")
+summary(pleasant_reduced)
+
+
+reward_eff <- lmer(Reaction.Time ~ grouped_rating + (1|Participant.Public.ID), data = RTs_with_ratings, REML = FALSE)
+
+anova(pleasant_reduced, reward_eff)
+
+
+
+
+```
+Looking at whether there is an effect of pleasantness ratings on reaction times: 
+```{r}
+full <- lmer(Reaction.Time ~ grouped_rating + (1|Participant.Public.ID), data = RTs_with_ratings, REML= FALSE)
+reduced <- lmer(Reaction.Time ~ (1|Participant.Public.ID), data = RTs_with_ratings, REML = FALSE)
+anova(full, reduced)
+summary(full)
+
+emmeans(full, (pairwise ~ grouped_rating), adjust = "none")
+```
+
+
+```{r}
+ggplot(RTs_with_ratings, aes(x=rating, y=Reaction.Time)) + geom_point()
+```
+
+
+
+Mean ratings and whether these are significantly different for the different conditions:
+ANOVA
+```{r}
+library(afex)
+library(broom)
+# pleasantness$rating <- droplevels(pleasantness$rating)
+pleasantness$rating <- as.character(pleasantness$rating)
+pleasantness$rating <- as.numeric(pleasantness$rating)
+
+# pleasantness <- pleasantness %>%  mutate(reward_num = recode(reward.magnitude, "large" = 3, "small" = 2, "none" = 1))
+mod <- aov_ez(id = "Participant.Public.ID", # the column containing the subject IDs
+              dv = "rating", # the DV 
+              within = "reward.magnitude", # the between-subject variable
+              es = "pes", # sets effect size to partial eta-squared
+              type = 3, # this affects how the sum of squares is calculated, set this to 3
+              data = pleasantness)
+
+anova(mod)
+mod_output <- (mod$anova_table) %>% tidy()
+mod_output
+
+mod_pairwise <- emmeans(mod$aov, pairwise ~ reward.magnitude, adjust = "none")
+mod_pairwise
+
+# graph: 
+
+mean_pleasant <- pleasantness %>% 
+  group_by(reward.magnitude) %>% 
+  summarise( sd = sd(rating), rating = mean(rating))
+
+
+
+library(ggsignif)
+
+
+#
+pdf(file = "/Users/carolynmcgettigan/Documents/Thesis/CHAPTER_4/CH4_pleasantness_ratings_pos_dodge.pdf", # The directory you want to save the file in
+width = 8, # The width of the plot in inches
+height = 6)
+ggplot(mean_pleasant, aes(x = reward.magnitude, y = rating)) + 
+  geom_bar(stat = "identity", alpha = 0.8, width = 0.9, fill = c("#a01a58", "#723c70", "#5c4d7d")) + 
+  geom_point(data = pleasantness, size = 0.9, alpha = 0.4, aes(fill = "black"), position = position_dodge2(width=0.2), show.legend = FALSE) + 
+  # geom_errorbar(aes(ymin = rating - sd, ymax = rating + sd), width = 0.1) +
+  theme_classic() + 
+  scale_y_continuous(breaks = c(1, 2, 3, 4, 5, 6, 7, 8, 9), limits = c(0,11)) + 
+  labs(x = "Outcome", y = "Pleasantness Rating") + 
+  scale_x_discrete(labels = c("Musical\nIdol", "Athlete", "Pure\n Tone")) +
+geom_signif(comparisons = list(c("large", "small")), annotations="***", y_position = 10, size = 0.9, textsize = 10,vjust=0.4,
+              map_signif_level=TRUE) +
+  geom_signif(comparisons = list(c("large", "none")), annotations="***", y_position = 11,textsize = 10, size = 0.9, vjust=0.4, map_signif_level = TRUE) +
+  geom_signif(comparisons = list(c("small", "none")), annotations="***", textsize = 10, size = 0.9, vjust=0.1, y_position = 9.5, map_signif_level = TRUE) +
+ # ylim(0,10) + 
+  theme(axis.text.x = element_text(face = "bold", size = 16, angle = 0, colour = "black"), 
+        axis.text.y = element_text(face = "bold", size = 16, angle = 0, colour = "black"),
+     axis.title = element_text(face = "bold", size = 16, colour = "black"),
+     axis.title.x = element_text(margin = margin(t=20)),
+        axis.title.y = element_text(margin = margin(r=20)))
+dev.off()
+
+
+
+```
+
+
+Exploratory Analyses: 
+
+Examining whether there were differences in the number of timeout trials between the three conditions (were listeners just trying less hard for certain voices): 
+```{r}
+dat2 <- merged %>% select(Participant.Public.ID, reward.magnitude, Reaction.Time, display, Response, Screen.Name, exclude, stim_type, branch.k895, threshold, Spreadsheet)
+
+dat2 <- dat2 %>% filter(Participant.Public.ID != "p115", Participant.Public.ID != "p120", Participant.Public.ID != "p129", Participant.Public.ID != "p105", Participant.Public.ID != "p202", Participant.Public.ID != "p242", Participant.Public.ID != "p126", Participant.Public.ID != "p262")
+
+# Extract the counterbalancing order: 
+
+dat2$CB_order <- dat2$Spreadsheet %>% 
+  recode(beyonce_CB1 = "CB1", beyonce_CB2 = "CB2", beyonce_CB3 = "CB3", harry_CB1 = "CB1", harry_CB2 = "CB2", harry_CB3 = "CB3", taylor_CB1 = "CB1", taylor_CB2 = "CB2", taylor_CB3 = "CB3", justin_CB1 = "CB1", justin_CB2 = "CB2", justin_CB3 = "CB3")
+
+timeout_dat <- mutate(dat2, dv = if_else(Response == "Press", 0, 1))
+
+timeout_dat <- filter(timeout_dat, exclude == 0)
+```
+ 
+```{r}
+# Convert RT into numeric: 
+timeout_dat$Reaction.Time <- as.character(timeout_dat$Reaction.Time)
+options(digits = 9)
+timeout_dat$Reaction.Time <- as.numeric(timeout_dat$Reaction.Time)
+
+timeouts <- select(timeout_dat, "Participant.Public.ID", "dv", "reward.magnitude") %>%  group_by(Participant.Public.ID, reward.magnitude) %>% summarise(dv = mean(dv))
+timeouts$reward.magnitude <- droplevels(timeouts$reward.magnitude)
+
+
+
+# timeout_dat$dv <- as.factor(timeout_dat$dv)
+
+# timeout_dat_final <- timeout_dat %>% filter(Reaction.Time > 149.99)
+
+# timeout_dat_final$Participant.Public.ID <- droplevels(timeout_dat_final$Participant.Public.ID)
+
+# #
+# mod <- aov_ez(id = "Participant.Public.ID", # the column containing the subject IDs
+#               dv = "dv", # the DV
+#               within = "reward.magnitude", # the between-subject variable
+#               es = "pes", # sets effect size to partial eta-squared
+#               type = 3, # this affects how the sum of squares is calculated, set this to 3
+#               data = timeouts)
+# 
+# anova(mod)
+# mod_output <- (mod$anova_table) %>% tidy()
+# mod_output
+# 
+# mod_pairwise <- emmeans(mod$aov, pairwise ~ reward.magnitude, adjust = "FDR")
+# mod_pairwise
+# 
+# mean_timeout <- timeout_dat %>%
+#   group_by(reward.magnitude, Participant.Public.ID) %>%
+#   summarise(sum = sum(dv)) %>%
+#   summarise(mean = mean(sum))
+# 
+# ggplot(mean_timeout, aes(x = reward.magnitude, y = mean)) +
+#   geom_bar(stat = "identity", alpha = 0.8, fill = "black") +
+#   # geom_point(data = timeout_dat, size = 0.85, alpha = 0.6, aes(color = factor(Participant.Public.ID)), show.legend = FALSE, position = position_dodge(width = 0.2)) +
+#   theme_classic() +
+#   labs(x = "incentive magnitude", y = "mean number of timeouts") +
+#  # ylim(0,9) +
+#     theme(axis.text.x = element_text(face = "bold", size = 16, angle = 0),
+#         axis.text.y = element_text(face = "bold", size = 16, angle = 0),
+#      axis.title = element_text(face = "bold", size = 16))
+
+```
+
+Set up the models:
+```{r}
+# timeout_dat$dv <- as.factor(timeout_dat$dv)
+timeout_dat$reward.magnitude <- droplevels(timeout_dat$reward.magnitude)
+timeout_full <- glmer(dv ~ reward.magnitude + (1|Participant.Public.ID), data = timeout_dat, family = "binomial")
+
+timeout_reduced <- glmer(dv ~ (1|Participant.Public.ID), data = timeout_dat, family = "binomial")
+
+
+anova(timeout_full,timeout_reduced)
+
+
+
+```
+
+
+```{r}
+emmeans(timeout_full, (pairwise ~ reward.magnitude), adjust = "FDR")
+```
+
+```{r}
+library(effects)
+e <- allEffects(timeout_full)
+print(e)
+plot(e)
+```
+
+
+Trivia scores and reward magnitude on reaction times: 
+is there an interaction between the famous voice and how much trivia knowledge a listener has, on the participant's reaction time? 
+E.g. are participants faster if they score highly on trivia AND it is a voice they care about?
+```{r}
+trivia <- questionnaires %>% 
+  filter(Question.Key == "Q1" | Question.Key == "Q2" | Question.Key == "Q3"| Question.Key == "Q4"| Question.Key == "Q5"| Question.Key == "Q6"| Question.Key == "Q7"| Question.Key == "Q8"| Question.Key == "Q9"| Question.Key == "Q10")
+
+# Group by participant and work out the total score: 
+trivia_scores <- trivia %>% 
+  group_by(Participant.Public.ID) %>% 
+  summarise(total_score = sum(correct, na.rm = TRUE))
+
+summary_dat <- finaldat %>% 
+  group_by(Participant.Public.ID, reward.magnitude)
+
+
+dat_with_trivia <- inner_join(finaldat, trivia_scores)
+
+dat_with_trivia$total_score <- as.factor(dat_with_trivia$total_score)
+
+trivia_interact <- lmer(Reaction.Time ~ reward.magnitude*total_score + (1|Participant.Public.ID), data = dat_with_trivia, REML = FALSE)
+trivia_reduced <- lmer(Reaction.Time ~ reward.magnitude + total_score + (1|Participant.Public.ID), data = dat_with_trivia, REML = FALSE)
+anova(trivia_interact, trivia_reduced)
+
+summary(trivia_interact)
+emmeans(trivia_interact, (pairwise ~ reward.magnitude*total_score), adjust = "none")
+
+```
+
+```{r}
+trivia_eff <- lmer(Reaction.Time ~ reward.magnitude + (1|Participant.Public.ID), data = dat_with_trivia, REML = FALSE)
+
+anova(trivia_reduced, trivia_eff)
+
+emmeans(trivia_reduced, (pairwise ~ total_score), adjust = "none")
+```
+
+```{r}
+y <- finaldat %>% 
+group_by(Participant.Public.ID, branch.k895) %>% 
+summarise(mean = mean(Reaction.Time, na.rm = TRUE))
+
+z <- y %>% group_by(branch.k895) %>% summarise(n = n())
+
+v <- finaldat %>% 
+  group_by(Participant.Public.ID) %>% 
+  summarise(mean = mean(Reaction.Time, na.rm = TRUE))
+w <- v %>%  summarise(n = n())
+```
+
+
+Working out trivia scores per participant and per group/celeb: 
+```{r}
+dat_with_trivia <- inner_join(finaldat, trivia_scores)
+trivia <- dat_with_trivia %>% group_by(Participant.Public.ID, branch.k895) %>% summarise(total_score = mean(total_score))
+summary <- trivia %>% group_by(branch.k895, total_score) %>% summarise(n = n())
+
+general_summary <- trivia %>%  group_by(total_score) %>% summarise(n = n())
+
+# Removing participants that performed poorly on the trivia quiz: 
+
+data_rm_poor_scorers <- dat_with_trivia %>% filter(total_score > 6)
+
+raw_means <- data_rm_poor_scorers %>% group_by(reward.magnitude) %>% summarise(mean = mean(Reaction.Time))
+ 
+# Seeing if this affects the results (it doesn't): 
+full <- lmer(Reaction.Time ~ reward.magnitude + (1|Participant.Public.ID), data = data_rm_poor_scorers, REML = FALSE)
+reduced <- lmer(Reaction.Time ~ (1|Participant.Public.ID), data = data_rm_poor_scorers, REML = FALSE)
+
+anova(full, reduced)
+
+emmeans(full, (pairwise ~ reward.magnitude), adjust = "FDR")
+
+
+```
+
+
