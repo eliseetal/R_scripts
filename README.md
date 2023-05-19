@@ -13,5 +13,10 @@
 ###### Example data analysis script. Used binomial generalised linear mixed models to explore whether participants in an experiment were relying on particular acoustic cues to identify voices in a voice recognition task. 
  - .Rmd -> markdown file 
  - .html -> knitted, formatted document 
+
+##### merge_csvs: 
+###### Handy script for merging multiple csv data files 
+
+
  
  
