@@ -17,6 +17,9 @@
 ##### merge_csvs: 
 ###### Handy script for merging multiple csv data files 
 
+##### prescreen_summary.csv: 
+###### recursively searches for csv files containing research subject data, merges, cleans, and re-formats data from long to wide, renames data columns for easier readability and saves off a summary csv with all participant data ready for further analysis. 
+
 
  
  
